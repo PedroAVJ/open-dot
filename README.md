@@ -1,10 +1,5 @@
 # Open Dot
 
-Development has moved to [F/apps/open-dot](https://github.com/PedroAVJ/f/tree/main/apps/open-dot).
-That package is the canonical source for new work. This checkout is retained
-only for running sessions and existing runtime paths; moving the source does
-not restart those services or move their saved data.
-
 Dot is a native iPhone app backed by the harness on your Mac mini.
 The app is compiled from Bend using [PedroAVJ/f](https://github.com/PedroAVJ/f).
 It keeps the existing dark conversation components and glass controls.
