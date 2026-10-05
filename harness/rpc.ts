@@ -70,7 +70,7 @@ export class AppServer {
 
   private consume(chunk: string) {
     this.buffer += chunk;
-    if (this.buffer.length > 16_000_000) return this.fail(new Error("Codex app-server sent an oversized message."));
+    if (this.buffer.length > 256_000_000) return this.fail(new Error("Codex app-server sent an oversized message."));
     let boundary: number;
     while ((boundary = this.buffer.indexOf("\n")) !== -1) {
       const line = this.buffer.slice(0, boundary); this.buffer = this.buffer.slice(boundary + 1);
