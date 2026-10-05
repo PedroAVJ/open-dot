@@ -1,0 +1,17 @@
+{
+  "name": "@pedroavj/open-dot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PedroAVJ/open-dot.git"
+  },
+  "scripts": {
+    "check:dependencies": "bun script/check_dependencies.ts",
+    "build:ios": "bun script/build_ios.ts",
+    "build:web": "bun script/build_web.ts",
+    "test:harness": "bun --cwd harness test"
+  }
+}

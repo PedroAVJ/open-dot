@@ -15,7 +15,12 @@ the app closes. While a reply is running, Stop replaces the camera control.
 The attachment control offers Camera, Photos and Files. Files keep their original
 bytes, name and caption, and an unsent file draft survives app relaunch.
 
-Keep the fork beside this repository at `../f`. The Mac needs Bun, Tailscale,
+Open Dot is independently versioned in this repository (`package.json`).
+The language fork and shared [f-platform](https://github.com/PedroAVJ/f-platform)
+are separate repositories, pinned by revision in `dependencies.lock.json`.
+Keep the fork beside this repository at `../f`; initialize its platform with
+`git -C ../f submodule update --init --recursive`. Run `bun script/check_dependencies.ts`
+to verify the pins; each build rejects changed or dirty dependency checkouts. The Mac needs Bun, Tailscale,
 the Codex CLI, Claude Code and Xcode with iOS SDKs. Sign into both providers, then build and deploy:
 
 ```sh
@@ -54,8 +59,8 @@ Session files live in `~/Library/Application Support/OpenDot` and logs in
 `~/Library/Logs/OpenDot`. The signed IPA is available privately at
 `/downloads/Dot.ipa` on the harness address.
 
-Codex uses the available default model from its model catalog and automatic
-approval review. The owner-configured Mac runtime has full filesystem access,
+Codex uses the available default model from its model catalog, with
+approval policy `never` and approval reviewer `user`. The owner-configured Mac runtime has full filesystem access,
 including adjacent repositories. Open Dot answers tool-access approval requests
 affirmatively for the current request or turn, including Computer Use app access.
 It does not store global permission grants.

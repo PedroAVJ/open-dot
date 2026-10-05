@@ -1,7 +1,9 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { verifyDependencies } from './check_dependencies.ts';
 
 const root = resolve(import.meta.dir, '..');
+verifyDependencies(root);
 const destination = resolve(root, 'dist/dot.web');
 const shell = readFileSync(resolve(root, '../f/bend2/std/F/browser/shell.js'), 'utf8');
 if (!shell.includes('options.host?.')) throw Error('The adjacent F browser host must support application IO adapters.');
