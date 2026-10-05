@@ -16,11 +16,10 @@ The attachment control offers Camera, Photos and Files. Files keep their origina
 bytes, name and caption, and an unsent file draft survives app relaunch.
 
 Open Dot is independently versioned in this repository (`package.json`).
-The language fork and shared [f-platform](https://github.com/PedroAVJ/f-platform)
-are separate repositories, pinned by revision in `dependencies.lock.json`.
-Keep the fork beside this repository at `../f`; initialize its platform with
-`git -C ../f submodule update --init --recursive`. Run `bun script/check_dependencies.ts`
-to verify the pins; each build rejects changed or dirty dependency checkouts. The Mac needs Bun, Tailscale,
+The language fork includes its standard library at `bend2/std/F`; both are
+pinned together by the compiler revision in `dependencies.lock.json`.
+Keep the fork beside this repository at `../f`. Run `bun script/check_dependencies.ts`
+to verify the pin; each build rejects changed or dirty dependency checkouts. The Mac needs Bun, Tailscale,
 the Codex CLI, Claude Code and Xcode with iOS SDKs. Sign into both providers, then build and deploy:
 
 ```sh

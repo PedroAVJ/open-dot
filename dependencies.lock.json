@@ -4,13 +4,7 @@
     "compiler": {
       "repository": "https://github.com/PedroAVJ/f.git",
       "path": "../f",
-      "revision": "d1c481f15d0894fc7b8bafe8138c3918831eb348"
-    },
-    "platform": {
-      "repository": "https://github.com/PedroAVJ/f-platform.git",
-      "path": "../f/bend2/std/F",
-      "revision": "2b5132ba88cf41d9e6bafffdcc5f50a833155da4",
-      "version": "0.1.0"
+      "revision": "9ea94111ac3e890c6aba22fb5a98b53c89e31274"
     }
   }
 }

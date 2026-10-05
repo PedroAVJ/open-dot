@@ -51,7 +51,6 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 source_commit="$(git rev-parse HEAD)"
 fork_commit="$(git -C ../f rev-parse HEAD)"
-platform_commit="$(git -C ../f/bend2/std/F rev-parse HEAD)"
 if $publish; then
   if [ "$source_commit" != "$(git ls-remote origin refs/heads/main | cut -f1)" ] ||
      [ "$fork_commit" != "$(git -C ../f ls-remote origin refs/heads/main | cut -f1)" ]; then
@@ -71,8 +70,6 @@ mkdir -p "$build_root" "$release_dir/work/f"
 # Build committed snapshots so unrelated local fork edits cannot enter a release.
 git archive "$source_commit" | tar -x -C "$build_root"
 git -C ../f archive "$fork_commit" | tar -x -C "$release_dir/work/f"
-mkdir -p "$release_dir/work/f/bend2/std/F"
-git -C ../f/bend2/std/F archive "$platform_commit" | tar -x -C "$release_dir/work/f/bend2/std/F"
 (cd "$build_root" && BEND="$release_dir/work/f/bend2/main.ts" bun ../f/bend2/main.ts macos_system build)
 app_bundle="$release_dir/Dot.app"
 ditto "$build_root/dist/mac.macos/Dot.app" "$app_bundle"
