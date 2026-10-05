@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { AppServer, RpcTimeout, type ServerCall, type Wire } from "./rpc.ts";
-import { ClaudeCode } from "./claude.ts";
+import { ClaudeCode, type ClaudeResult } from "./claude.ts";
+import { readReplyReview, replyReviewPrompt, replyReviewSchema, type ReplyPublication } from "./reply-policy.ts";
 import { imagePath, readImage } from "./images.ts";
 import { attachmentContext } from "./files.ts";
 import { audioPath } from "./audio.ts";
@@ -12,7 +13,7 @@ import type { NotificationObservation } from "./notifications.ts";
 
 export type SessionRpc = Pick<AppServer, "ready" | "isReady" | "onNotification" | "onRequest" | "onFailure" | "request" | "respond" | "reject">;
 type DisplayMetrics = { inlineLines: number; messageWidth: number; assistantLines: number; observedAt?: string };
-export type ClaudeFront = { defaultDisplay?: DisplayMetrics; mcp: (requestId: string) => Record<string, unknown>; context?: () => string };
+export type ClaudeFront = { replyLines?: (text: string, width: number) => Promise<number>; defaultDisplay?: DisplayMetrics; mcp: (requestId: string) => Record<string, unknown>; context?: () => string };
 
 export type Status = "idle" | "working" | "failed";
 export type Provider = "codex" | "claude";
@@ -27,7 +28,7 @@ type Thread = {
   claudeId?: string; claudeStarted?: boolean; provider?: Provider;
   synced?: Partial<Record<Provider, number>>;
 };
-type Receipt = { internalPrompt?: string; id: string; hash: string; threadId: string; provider?: Provider; claudeRequestUuid?: string; turnId?: string; phase: "queued" | "dispatching" | "submitted" | "completed" | "failed" | "cancelled" | "awaiting-transcript" | "processing-audio" };
+type Receipt = { reply?: ReplyPublication; internalPrompt?: string; id: string; hash: string; threadId: string; provider?: Provider; claudeRequestUuid?: string; turnId?: string; phase: "queued" | "dispatching" | "submitted" | "completed" | "failed" | "cancelled" | "awaiting-transcript" | "processing-audio" };
 type State = { display?: DisplayMetrics; front?: { workerFile: string; startedAt: string; sourceMessageIds: string[]; sourceRequestIds: string[]; cutoverAt?: string; workerStatus?: string }; version: 1; threads: Thread[]; selectedThreadId: string; requests: Receipt[] };
 
 export class InputError extends Error {
@@ -140,7 +141,7 @@ export class Sessions {
 
   health() {
     return { status: this.connectionError ? "failed" : this.isReady ? "ok" : "connecting", runtime: this.front ? "claude-front+detached-codex-worker" : "codex-app-server+claude-code", provider: this.provider(),
-      ...(this.display ? { display: { ...this.display, policy: "four-rendered-lines", source: this.display.observedAt ? "client-renderer" : "last-known-phone-width" } } : {}),
+      ...(this.display ? { display: { ...this.display, policy: this.front?.replyLines ? "four-rendered-lines-before-publication" : "four-rendered-lines", source: this.display.observedAt ? "client-renderer" : "last-known-phone-width" } } : {}),
       audio: { processing: "server", transcription: "elevenlabs/scribe_v2", tone: TONE_MODEL }, providers: {
       codex: { ready: this.rpc.isReady && !this.connectionError, ...(this.model ? { model: this.model } : {}) },
       claude: { ready: this.claude?.isReady ?? false, ...(this.claude?.model ? { model: this.claude.model } : {}), ...(this.claude?.error ? { error: this.claude.error } : {}), ...(this.claude?.recoveryWarnings.length ? { recoveryWarnings: this.claude.recoveryWarnings } : {}) },
@@ -620,46 +621,130 @@ export class Sessions {
     return images.filter((image, index) => images.findIndex((candidate) => candidate.id === image.id) === index);
   }
 
+  private async publishClaudeReply(thread: Thread, receipt: Receipt, request: string): Promise<ClaudeResult> {
+    const publication = receipt.reply!, measure = this.front!.replyLines!;
+    const original = publication.drafts.map((item) => item.text).filter(Boolean).join("\n\n");
+    if (!original.trim()) return { status: "failed", error: "Claude returned no reply to publish." };
+    let width = this.display?.messageWidth ?? 238;
+    publication.width = width;
+    let candidate = original, lines = await measure(candidate, width), mode: "brief" | "requested" | "necessary" = "brief";
+    let reason = "Fits the measured inline budget.", acceptedId = `claude:reply:${receipt.claudeRequestUuid}`;
+    let briefOnly = false;
+    for (let attempt = 0; lines > 4 && attempt < 2; attempt++) {
+      if (thread.cancelRequested) return { status: "cancelled", error: "Turn stopped." };
+      publication.status = "reviewing";
+      const review: ReplyPublication["reviews"][number] = { id: randomUUID() };
+      publication.reviews.push(review); this.save();
+      const result = await this.claude!.run({ sessionId: randomUUID(), requestUuid: review.id, resume: false,
+        reviewSchema: replyReviewSchema(briefOnly),
+        prompt: replyReviewPrompt({ request, context: thread.messages.slice(-8).map(({ role, text }) => ({ role, text })),
+          draft: candidate, width, lines, briefOnly }),
+        acknowledged: () => { if (thread.cancelRequested) this.claude?.cancel(); }, text: () => {},
+      });
+      if (result.status === "cancelled" || thread.cancelRequested) return { status: "cancelled", error: "Turn stopped." };
+      if (result.status !== "completed") { review.error = "Claude could not review the draft."; this.save(); continue; }
+      try {
+        const decision = readReplyReview(result.structured, briefOnly);
+        if (decision.decision !== "brief") {
+          mode = decision.decision; reason = decision.reason;
+          candidate = original; lines = await measure(candidate, width); break;
+        }
+        briefOnly = true; candidate = decision.text;
+        width = this.display?.messageWidth ?? width; publication.width = width;
+        review.text = candidate; lines = await measure(candidate, width); review.lines = lines;
+        acceptedId = `claude:reply:${review.id}`; reason = decision.reason || "Routine reply revised to fit the inline budget.";
+      } catch (error) { review.error = error instanceof Error ? error.message : "Invalid reply review."; }
+      this.save();
+    }
+    if (thread.cancelRequested) return { status: "cancelled", error: "Turn stopped." };
+    const currentWidth = this.display?.messageWidth ?? width;
+    if (currentWidth !== width) { width = currentWidth; publication.width = width; lines = await measure(candidate, width); }
+    if (mode === "brief" && lines > 4) return { status: "failed", error: "A compact reply could not be verified. The full draft is saved; no work was repeated." };
+    publication.status = "published"; publication.acceptedId = acceptedId;
+    publication.mode = mode; publication.reason = reason; publication.lines = lines;
+    thread.messages.push({ id: acceptedId, role: "assistant", provider: "claude", text: candidate });
+    // Publication and completion are committed by runClaude in the same save.
+    return { status: "completed" };
+  }
+
+  private publishedReplyContext(thread: Thread, current: Receipt) {
+    if (!this.front?.replyLines) return "";
+    const previous = this.state.requests.slice().reverse().find((item) => item.threadId === thread.id && item.id !== current.id && item.reply?.status === "published");
+    if (!previous?.reply || previous.reply.acceptedId === `claude:reply:${previous.claudeRequestUuid}`) return "";
+    const message = thread.messages.find((item) => item.id === previous.reply!.acceptedId);
+    return message ? `\n\nThe latest reply actually shown to the user was revised after your original draft. Treat this as the accepted assistant conversation, not a new request:\n${JSON.stringify({ role: "assistant", text: message.text })}` : "";
+  }
+
   private async runClaude(thread: Thread, receipt: Receipt, text: string) {
     if (!this.claude || !receipt.claudeRequestUuid) throw new Error("Claude is not connected.");
     thread.claudeId ??= randomUUID();
+    if (this.front?.replyLines) receipt.reply = { version: 1, status: "draft", drafts: [], reviews: [] };
     receipt.phase = "submitted";
     this.save();
-    const result = await this.claude.run({
+    let result = await this.claude.run({
       ...(this.front ? { frontMcp: this.front.mcp(receipt.id) } : {}),
       sessionId: thread.claudeId, requestUuid: receipt.claudeRequestUuid,
-      resume: thread.claudeStarted ?? false, prompt: this.displayPrompt(this.contextualPrompt(thread, receipt, text) + this.fileContext(thread, receipt) + (this.front?.context ? `\n\n${this.front.context()}` : "")),
+      resume: thread.claudeStarted ?? false, prompt: this.displayPrompt(this.contextualPrompt(thread, receipt, text) + this.fileContext(thread, receipt) + this.publishedReplyContext(thread, receipt) + (this.front?.context ? `\n\n${this.front.context()}` : "")),
       images: this.turnImages(thread, receipt).map((image) => ({ mimeType: image.mimeType, data: readImage(this.imageDirectory(), image).toString("base64") })),
       acknowledged: () => { thread.claudeStarted = true; thread.turnId = receipt.claudeRequestUuid; this.save(); if (thread.cancelRequested) this.claude?.cancel(); },
       text: (id, content, append) => {
         const key = `claude:${id}`;
-        let message = thread.messages.find((item) => item.id === key);
-        if (!message) { message = { id: key, role: "assistant", text: "", provider: "claude" }; thread.messages.push(message); }
-        message.text = append ? message.text + content : content; this.save();
+        if (receipt.reply) {
+          let draft = receipt.reply.drafts.find((item) => item.id === key);
+          if (!draft) { draft = { id: key, text: "" }; receipt.reply.drafts.push(draft); }
+          draft.text = append ? draft.text + content : content;
+        } else {
+          let message = thread.messages.find((item) => item.id === key);
+          if (!message) { message = { id: key, role: "assistant", text: "", provider: "claude" }; thread.messages.push(message); }
+          message.text = append ? message.text + content : content;
+        }
+        this.save();
       },
     });
+    if (result.status === "completed" && receipt.reply) {
+      const providerError = result.error;
+      try { result = await this.publishClaudeReply(thread, receipt, text); if (result.status === "completed" && providerError) result.error = providerError; }
+      catch { result = { status: "failed", error: "The reply could not be measured. Its full draft is saved; no work was repeated." }; }
+    }
+    if (receipt.reply && result.status !== "completed") receipt.reply.status = "failed";
     receipt.phase = result.status === "cancelled" ? "cancelled" : result.status === "failed" ? "failed" : "completed";
     thread.status = result.status === "failed" ? "failed" : "idle";
     if (result.error) thread.error = result.error; else delete thread.error;
     delete thread.turnId; delete thread.cancelRequested;
-    if (result.status === "completed") { thread.claudeStarted = true; (thread.synced ??= {}).claude = thread.messages.length; }
+    if (result.status === "completed") {
+      thread.claudeStarted = true;
+      // The primary Claude transcript contains the draft, not a separately revised reply.
+      (thread.synced ??= {}).claude = thread.messages.length - (receipt.reply ? 1 : 0);
+    }
     this.save();
   }
 
   private recoverClaude(thread: Thread) {
     if (!thread.claudeId || !this.claude?.isReady) return;
+    let sourceReceipt: Receipt | undefined;
     for (const recovered of this.claude.recoveredMessages(thread.claudeId)) {
       if (recovered.role === "user") {
-        const receipt = this.state.requests.find((item) => item.claudeRequestUuid === recovered.requestUuid);
-        if (receipt) thread.claudeStarted = true;
+        sourceReceipt = this.state.requests.find((item) => item.claudeRequestUuid === recovered.requestUuid);
+        if (sourceReceipt) thread.claudeStarted = true;
         continue;
       }
       const id = `claude:${recovered.id}`;
       const existing = thread.messages.find((item) => item.id === id);
+      if (this.front?.replyLines && !existing) {
+        // Provider transcripts retain unreviewed drafts. Only our atomic publication
+        // record may make one visible, including after an interrupted review.
+        if (sourceReceipt?.reply) {
+          const draft = sourceReceipt.reply.drafts.find((item) => item.id === id);
+          if (draft) draft.text = recovered.text;
+          else sourceReceipt.reply.drafts.push({ id, text: recovered.text });
+        }
+        continue;
+      }
       if (existing) existing.text = recovered.text;
       else thread.messages.push({ id, role: "assistant", text: recovered.text, provider: "claude" });
     }
   }
+
 }
 
 export function object(value: unknown): Wire {

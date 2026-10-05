@@ -424,8 +424,8 @@ test("acknowledges immediately, streams real items, deduplicates and resumes off
   expect(selected(f.sessions).messages).toMatchObject([{ role: "user", text: "Hello" }, { role: "assistant", text: "Hello world" }]);
   expect(f.official().calls.filter((x: any) => x.method === "turn/start")).toHaveLength(1);
   const params = f.official().calls.find((x: any) => x.method === "thread/start").params;
-  expect(params).toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "on-request", approvalsReviewer: "auto_review" });
-  expect(f.official().calls.find((x: any) => x.method === "turn/start").params).toMatchObject({ sandboxPolicy: { type: "dangerFullAccess" }, approvalPolicy: "on-request", approvalsReviewer: "auto_review" });
+  expect(params).toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "never", approvalsReviewer: "user" });
+  expect(f.official().calls.find((x: any) => x.method === "turn/start").params).toMatchObject({ sandboxPolicy: { type: "dangerFullAccess" }, approvalPolicy: "never", approvalsReviewer: "user" });
   expect(params.model).toBe("canonical-test-model");
   expect(f.official().calls.find((x: any) => x.method === "turn/start").params.model).toBe("canonical-test-model");
   expect(f.sessions.health().model).toBe("canonical-test-model");

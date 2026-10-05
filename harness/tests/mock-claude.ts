@@ -29,6 +29,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (mode === "hold") { setInterval(() => {}, 10_000); return; }
   if (mode === "exit") process.exit(2);
   if (mode === "fail") { send({ type: "result", subtype: "error_during_execution", is_error: true }); return; }
+  if (mode.startsWith("reply-")) {
+    const draft = "This is the first part of the reply.\nThis is the second part of the reply.\nThis is the third part of the reply.\nThis is the fourth part of the reply.\nThe necessary final detail remains intact.";
+    const review = args.includes("--json-schema");
+    if (review && mode === "reply-review-hold") { setInterval(() => {}, 10_000); return; }
+    setTimeout(() => {
+      const decision = mode === "reply-requested" ? "requested" : mode === "reply-necessary" ? "necessary" : "brief";
+      const structured = { decision, reason: decision === "requested" ? "The user requested the full explanation." : decision === "necessary" ? "The final detail is indispensable to an accurate answer." : "Routine answer.",
+        text: decision !== "brief" ? "" : mode === "reply-repeat-overflow" ? draft : "Done; the requested change is installed." };
+      const reply = review ? JSON.stringify(structured) : draft;
+      const message = { id: messageId, content: [{ type: "text", text: reply }] };
+      state.sessions[sessionId].push({ type: "assistant", sessionId, message }); save();
+      send({ type: "stream_event", event: { type: "message_start", message: { id: messageId } } });
+      send({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: reply } } });
+      send({ type: "assistant", message });
+      send({ type: "result", subtype: "success", is_error: false, result: reply, ...(review ? { structured_output: structured } : {}), permission_denials: [] });
+    }, 25);
+    return;
+  }
   setTimeout(() => {
     send({ type: "stream_event", event: { type: "message_start", message: { id: messageId } } });
     send({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "Claude " } } });

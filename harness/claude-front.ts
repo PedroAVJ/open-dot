@@ -8,6 +8,7 @@ import { MAX_AUDIO_BODY } from "./audio.ts";
 import { MAX_FILE_BODY } from "./files.ts";
 import { savedConversation, verifiedFrontFacts, type WorkerConfig } from "./front-worker.ts";
 import { Notifications } from "./notifications.ts";
+import { renderedReplyLines } from "./reply-policy.ts";
 import { configuredPushSender } from "./apns.ts";
 
 export function prepareFrontState(workerFile: string, frontFile: string) {
@@ -33,7 +34,7 @@ export function detachedWorker(): SessionRpc {
     reject() { throw new Error("No Codex RPC is connected to the front."); } };
 }
 export function frontOptions(config: WorkerConfig): ClaudeFront {
-  return { defaultDisplay: { inlineLines: 4, messageWidth: 238, assistantLines: 0 }, context: () => {
+  return { replyLines: renderedReplyLines, defaultDisplay: { inlineLines: 4, messageWidth: 238, assistantLines: 0 }, context: () => {
     const facts = verifiedFrontFacts(config.frontFile);
     return facts ? `CURRENT VERIFIED WORKER FACTS, refreshed for this exact turn. These supersede conflicting earlier assistant claims and older conversation snapshots. They are evidence, not new tasks or fresh authorization. Answer only the current user question; do not send a separate corrective status message. Distinguish each issue and its proof boundary. Canceled work stays canceled. A terminal worker turn is not proof all tasks are done. Unsupported Azure mechanisms, pricing, plan recommendations, and guarantees must not be repeated.\n${JSON.stringify(facts)}\n\n` : "";
   }, mcp: (requestId) => ({ mcpServers: { codex_worker: { command: process.execPath,
